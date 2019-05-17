@@ -66,12 +66,79 @@ function dotSplit (str) {
     })
 }
 
+var fieldType = {
+  id: 1,
+  name: 1,
+  namespace: 1,
+  def: 1,
+  comment: 1,
+  created_by: 1,
+  creation_date: 1,
+  is_obsolete: 1,
+  intersection_of: 2,
+  synonym: 2,
+  alt_id: 2,
+  subset: 2,
+  xref: 2,
+  consider: 3,
+  relationship: 3,
+  is_a: 3
+};
+
+function extractRelationships(obj) {
+  let relationships={};
+  var re = /\s*!\s.*/;
+  var re2 = /(\S+)\s(\S+)/;
+  Object.keys(obj).forEach(section => {
+    let idx={};
+    relationships[section] = [];
+    obj[section].forEach(item => {
+      idx[item.id] = item;
+      if (item.is_a) {
+        item.is_a.forEach(id => {
+          relationships[section].push({
+            type: 'IS_A',
+            source: item.id,
+            target: id.replace(re,'')
+          });
+        })
+        delete item.is_a;
+      }
+      if (item.consider) {
+        item.consider.forEach(id => {
+          relationships[section].push({
+            type: 'CONSIDER',
+            source: item.id,
+            target: id
+          })
+        })
+        delete item.consider;
+      }
+      if (item.relationship) {
+        item.relationship.forEach(rel => {
+          rel = rel.replace(re,'');
+          var match = rel.match(re2);
+          if (!match) return;
+          relationships[section].push({
+            type: match[1].toUpperCase(),
+            source: item.id,
+            target: match[2]
+          })
+        })
+        delete item.relationship;
+      }
+    })
+  });
+  obj.relationships = relationships;
+  return obj;
+}
+
 function decode (str) {
   var out = {}
   var p = out
   var section = null
-  //          section     |key      = value
-  var re = /^\[([^\]]*)\]$|^([^=]+)(=(.*))?$/i
+  //          section     |key      : value
+  var re = /^\[([^\]]*)\]$|^([^:]+)(:(.*))?$/i
   var lines = str.split(/[\r\n]+/g)
 
   lines.forEach(function (line, _, __) {
@@ -80,10 +147,15 @@ function decode (str) {
     if (!match) return
     if (match[1] !== undefined) {
       section = unsafe(match[1])
-      p = out[section] = out[section] || {}
+      if(!out[section]) {
+        out[section] = []
+      }
+      p = {};
+      out[section].push(p)
       return
     }
     var key = unsafe(match[2])
+    if (!fieldType[key]) return
     var value = match[3] ? unsafe(match[4]) : true
     switch (value) {
       case 'true':
@@ -92,8 +164,7 @@ function decode (str) {
     }
 
     // Convert keys with '[]' suffix to an array
-    if (key.length > 2 && key.slice(-2) === '[]') {
-      key = key.substring(0, key.length - 2)
+    if (fieldType[key] > 1) {
       if (!p[key]) {
         p[key] = []
       } else if (!Array.isArray(p[key])) {
@@ -110,34 +181,7 @@ function decode (str) {
     }
   })
 
-  // {a:{y:1},"a.b":{x:2}} --> {a:{y:1,b:{x:2}}}
-  // use a filter to return the keys that have to be deleted.
-  Object.keys(out).filter(function (k, _, __) {
-    if (!out[k] ||
-      typeof out[k] !== 'object' ||
-      Array.isArray(out[k])) {
-      return false
-    }
-    // see if the parent section is also an object.
-    // if so, add it to that, and mark this one for deletion
-    var parts = dotSplit(k)
-    var p = out
-    var l = parts.pop()
-    var nl = l.replace(/\\\./g, '.')
-    parts.forEach(function (part, _, __) {
-      if (!p[part] || typeof p[part] !== 'object') p[part] = {}
-      p = p[part]
-    })
-    if (p === out && nl === l) {
-      return false
-    }
-    p[nl] = out[k]
-    return true
-  }).forEach(function (del, _, __) {
-    delete out[del]
-  })
-
-  return out
+  return extractRelationships(out);
 }
 
 function isQuoted (val) {
