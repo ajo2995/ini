@@ -79,7 +79,7 @@ var fieldType = {
   synonym: 2,
   alt_id: 2,
   subset: 2,
-  xref: 2,
+  xref: 3,
   consider: 3,
   relationship: 3,
   is_a: 3
@@ -89,6 +89,7 @@ function extractRelationships(obj) {
   let relationships={};
   var re = /\s*!\s.*/;
   var re2 = /(\S+)\s(\S+)/;
+  var re3 = /(\S+):\S+/;
   Object.keys(obj).forEach(section => {
     let idx={};
     relationships[section] = [];
@@ -96,20 +97,24 @@ function extractRelationships(obj) {
       idx[item.id] = item;
       if (item.is_a) {
         item.is_a.forEach(id => {
+          let match = id.match(re3);
+          if (!match) return;
           relationships[section].push({
             type: 'IS_A',
             source: item.id,
-            target: id.replace(re,'')
+            target: match[0]
           });
         })
         delete item.is_a;
       }
       if (item.consider) {
         item.consider.forEach(id => {
+          var match = id.match(re3);
+          if (!match) return;
           relationships[section].push({
             type: 'CONSIDER',
             source: item.id,
-            target: id
+            target: match[0]
           })
         })
         delete item.consider;
@@ -119,13 +124,27 @@ function extractRelationships(obj) {
           rel = rel.replace(re,'');
           var match = rel.match(re2);
           if (!match) return;
+          var labelid = match[2].match(re3);
+          if (!labelid) return;
           relationships[section].push({
             type: match[1].toUpperCase(),
             source: item.id,
-            target: match[2]
+            target: labelid[0]
           })
         })
         delete item.relationship;
+      }
+      if (item.xref) {
+        item.xref.forEach(xref => {
+          let x = xref.split(' ');
+          let label_id = x[0].split(':');
+          relationships[section].push({
+            type: 'XREF',
+            source: item.id,
+            target: x[0]
+          })
+        })
+        delete item.xref;
       }
     })
   });
@@ -162,7 +181,10 @@ function decode (str) {
       case 'false':
       case 'null': value = JSON.parse(value)
     }
-
+    if (key === "synonym" || key === "def") {
+      var m = value.match(/^"(.+)"/);
+      if (m) value = m[1];
+    }
     // Convert keys with '[]' suffix to an array
     if (fieldType[key] > 1) {
       if (!p[key]) {
@@ -177,7 +199,11 @@ function decode (str) {
     if (Array.isArray(p[key])) {
       p[key].push(value)
     } else {
-      p[key] = value
+      p[key] = value;
+      if (key === 'id') {
+        var label_id = value.split(':');
+        p.label = label_id[0];
+      }
     }
   })
 
