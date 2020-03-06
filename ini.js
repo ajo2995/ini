@@ -87,22 +87,24 @@ var fieldType = {
 
 function extractRelationships(obj) {
   let relationships={};
+  let xrefs = [];
+  let haveXref = {};
   var re = /\s*!\s.*/;
   var re2 = /(\S+)\s(\S+)/;
   var re3 = /(\S+):\S+/;
   Object.keys(obj).forEach(section => {
     let idx={};
     relationships[section] = [];
+    obj[section].forEach(item => idx[item.id] = item);
     obj[section].forEach(item => {
-      idx[item.id] = item;
       if (item.is_a) {
         item.is_a.forEach(id => {
           let match = id.match(re3);
           if (!match) return;
           relationships[section].push({
             type: 'IS_A',
-            source: item.id,
-            target: match[0]
+            source: {id:item.id,label:section},
+            target: {id:match[0],label:section}
           });
         })
         delete item.is_a;
@@ -113,8 +115,8 @@ function extractRelationships(obj) {
           if (!match) return;
           relationships[section].push({
             type: 'CONSIDER',
-            source: item.id,
-            target: match[0]
+            source: {id:item.id,label:section},
+            target: {id:match[0],label:section}
           })
         })
         delete item.consider;
@@ -128,8 +130,8 @@ function extractRelationships(obj) {
           if (!labelid) return;
           relationships[section].push({
             type: match[1].toUpperCase(),
-            source: item.id,
-            target: labelid[0]
+            source: {id:item.id,label:section},
+            target: {id:labelid[0],label:section}
           })
         })
         delete item.relationship;
@@ -137,18 +139,33 @@ function extractRelationships(obj) {
       if (item.xref) {
         item.xref.forEach(xref => {
           let x = xref.split(' ');
+          
           let label_id = x[0].split(':');
           relationships[section].push({
             type: 'XREF',
-            source: item.id,
-            target: x[0]
-          })
+            source: {id:item.id,label:section},
+            target: {id:x[0],label:idx.hasOwnProperty[x[0]] ? section : "Xref"}
+          });
+          if (!haveXref.hasOwnProperty(x[0]) && !idx.hasOwnProperty(x[0])) {
+            haveXref[x[0]] = true;
+            let xr = {
+              db: label_id[0],
+              dbid: label_id[1],
+              id: x[0]
+            };
+            if (x.length > 2) {
+              let y = xref.split('"');
+              xr.def = y[1];
+            }
+            xrefs.push(xr);
+          }
         })
         delete item.xref;
       }
     })
   });
   obj.relationships = relationships;
+  obj.xrefs = xrefs;
   return obj;
 }
 
@@ -159,6 +176,7 @@ function decode (str) {
   //          section     |key      : value
   var re = /^\[([^\]]*)\]$|^([^:]+)(:(.*))?$/i
   var lines = str.split(/[\r\n]+/g)
+  var regexEscComma = /\\,/gi;
 
   lines.forEach(function (line, _, __) {
     if (!line || line.match(/^\s*[;#]/)) return
@@ -184,6 +202,9 @@ function decode (str) {
     if (key === "synonym" || key === "def") {
       var m = value.match(/^"(.+)"/);
       if (m) value = m[1];
+    }
+    if (typeof value === "string") {
+      value = value.replace(regexEscComma, ',');
     }
     // Convert keys with '[]' suffix to an array
     if (fieldType[key] > 1) {
